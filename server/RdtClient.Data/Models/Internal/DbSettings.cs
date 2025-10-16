@@ -43,7 +43,7 @@ public class DbSettingsGeneral
     public Int32 DownloadLimit { get; set; } = 2;
 
     [DisplayName("Maximum unpack processes")]
-    [Description("Maximum amount of downloads that get unpacked on your host at the same time.")]
+    [Description("Maximum amount of downloads that get unpacked on your host at the same time. Set to 0 to disable unpacking.")]
     public Int32 UnpackLimit { get; set; } = 1;
 
     [DisplayName("Categories")]
@@ -74,7 +74,19 @@ Supports the following parameters:
     [DisplayName("Copy added torrent files")]
     [Description("When a torrent file or magnet is added, create a copy in this directory.")]
     public String? CopyAddedTorrents { get; set; } = null;
-    
+
+    [DisplayName("Tracker enrichment list")]
+    [Description("Optional. Specify the URL of a tracker list file to be appended to magnet links and torrent files.")]
+    public String? TrackerEnrichmentList { get; set; } = null;
+
+    [DisplayName("Tracker enrichment cache expiration")]
+    [Description("The time in minutes to cache the tracker list. Set to 0 to disable caching.")]
+    public Int32 TrackerEnrichmentCacheExpiration { get; set; } = 60;
+
+    [DisplayName("Banned Trackers")]
+    [Description("Torrents that come from these trackers will not be allowed, this is a failsafe if you are accidentally downloading from private trackers. Will compare by keyword. Define multiple trackers by separating them with a comma.")]
+    public String? BannedTrackers { get; set; } = null;
+
     [DisplayName("Disable update notifications")]
     [Description("Ignore update notifications. You will still be notified if the version you are running has a security vulnerability.")]
     public Boolean DisableUpdateNotifications { get; set; } = false;
@@ -85,7 +97,7 @@ public class DbSettingsDownloadClient
     [DisplayName("Download client")]
     [Description(@"Select which download client to use, see the
 <a href=""https://github.com/rogerfar/rdt-client/"" target=""_blank"">README</a> for the various options.")]
-    public DownloadClient Client { get; set; } = DownloadClient.Internal;
+    public DownloadClient Client { get; set; } = DownloadClient.Bezzad;
 
     [DisplayName("Download path")]
     [Description("Path in the docker container to download files to (i.e. /data/downloads), or a local path when using as a service.")]
@@ -261,6 +273,10 @@ public class DbSettingsDefaultsWithCategory : DbSettingsDefaults
     [DisplayName("Post Download Action")]
     [Description("When all files are downloaded from the provider to the host, perform this action. Does not apply when using the symlink downloader.")]
     public TorrentFinishedAction FinishedAction { get; set; } = TorrentFinishedAction.RemoveAllTorrents;
+    
+    [DisplayName("Finished Action Delay")]
+    [Description("When all files are downloaded from the provider to the host, wait this many minutes before performing the action above.")]
+    public Int32 FinishedActionDelay { get; set; } = 0;
 }
 
 public class DbSettingsDefaults

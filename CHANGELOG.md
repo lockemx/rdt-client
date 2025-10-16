@@ -4,7 +4,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [Unreleased
+
+## [2.0.119] - 2025-10-13
+### Removed
+- Removed internal downloader from the GUI.
+
+## [2.0.118] - 2025-10-06
+### Added
+- Added some fake qBittorrent API calls for decluttarr.
+
+## [2.0.117] - 2025-10-06
+### Removed
+- Removed internal downloader and migrated to the Bezzad downloader.
+
+## [2.0.116] - 2025-08-04
+### Added
+- Added setting to ban certain trackers from being added. Will filter by the torrent source or announcement urls.
+
+### Changed
+- Upgraded to Angular 20.
+
+## [2.0.115] - 2025-07-28
+### Added
+- Added setting to delay the finish action.
+
+### Fixed
+- Make sure the Real-Debrid provider times out when trying to add a new torrent.
+
+## [2.0.114] - 2025-06-21
+### Added
+- Add Select All functionality to the delete dialog in individual torrent screen, thanks @mentalblank
+- Add setting to add a list of trackers (from a URL) to every torrent and magnet that's added to rdt-client, thanks @mentalblank
+
+### Changed
+- The `User-Agent` header is now set on all requests to debrid providers' APIs. 
+
+## [2.0.113] - 2025-05-22
+### Fixed
+- Revert Synolog.Api.Client because of breaking changes.
+
+## [2.0.112] - 2025-05-18
+### Added
+- Add ability to disable the built in unpacking process by setting the "Maximum unpack processes" to 0.
+
+### Changed
+- Upgraded Angular to use control flow.
+
+### Fixed
+- Fixed dequeing issue.
+- Fixed logging handler for ProviderUpdater.
 
 ## [2.0.111] - 2025-05-03
 ### Added

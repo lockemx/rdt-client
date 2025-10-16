@@ -24,6 +24,7 @@ public class Torrents(
     IDownloads downloads,
     IProcessFactory processFactory,
     IFileSystem fileSystem,
+    IEnricher enricher,
     AllDebridTorrentClient allDebridTorrentClient,
     PremiumizeTorrentClient premiumizeTorrentClient,
     RealDebridTorrentClient realDebridTorrentClient,
@@ -109,8 +110,8 @@ public class Torrents(
 
     public async Task<Torrent> AddMagnetToDebridQueue(String magnetLink, Torrent torrent)
     {
+        var enriched = await enricher.EnrichMagnetLink(magnetLink);
         MagnetLink magnet;
-
         try
         {
             magnet = MagnetLink.Parse(magnetLink);
@@ -121,15 +122,39 @@ public class Torrents(
             throw new($"{ex.Message}, trying to parse {magnetLink}");
         }
 
+        if (!String.IsNullOrWhiteSpace(Settings.Get.General.BannedTrackers))
+        {
+            var bannedTrackers = Settings.Get.General.BannedTrackers.Split(',');
+
+            foreach (var bannedTracker in bannedTrackers)
+            {
+                var bannedTrackerCompare = bannedTracker.Trim().ToLower();
+
+                if (String.IsNullOrWhiteSpace(bannedTrackerCompare))
+                {
+                    continue;
+                }
+
+                if (magnet.AnnounceUrls != null)
+                {
+                    var bannedUrls = magnet.AnnounceUrls.Where(m => m.Trim().ToLower().Contains(bannedTrackerCompare)).ToList();
+
+                    if (bannedUrls.Count > 0)
+                    {
+                        var bannedUrlsString = String.Join(", ", bannedUrls);
+                        throw new($"Cannot add torrent, the torrent contains banned trackers: {bannedUrlsString}.");
+                    }
+                }
+            }
+        }
+
         torrent.RdStatus = TorrentStatus.Queued;
         torrent.RdName = magnet.Name;
 
         var hash = magnet.InfoHashes.V1OrV2.ToHex();
-
-        var newTorrent = await AddQueued(hash, magnetLink, false, torrent);
+        var newTorrent = await AddQueued(hash, enriched, false, torrent);
 
         Log($"Adding {hash} (magnet link) to queue", newTorrent);
-
         await CopyAddedTorrent(magnet.Name!, magnetLink);
 
         return newTorrent;
@@ -139,8 +164,20 @@ public class Torrents(
     {
         MonoTorrent.Torrent monoTorrent;
 
-        var fileAsBase64 = Convert.ToBase64String(bytes);
-        logger.LogDebug($"bytes {bytes}");
+        var enriched = await enricher.EnrichTorrentBytes(bytes);
+
+        String fileAsBase64;
+
+        if (enriched.SequenceEqual(bytes))
+        {
+            fileAsBase64 = Convert.ToBase64String(bytes);
+            logger.LogDebug($"bytes {bytes}");
+        }
+        else
+        {
+            fileAsBase64 = Convert.ToBase64String(enriched);
+            logger.LogDebug($"enriched bytes {enriched}");
+        }
 
         try
         {
@@ -151,6 +188,37 @@ public class Torrents(
             throw new($"{ex.Message}, trying to parse {fileAsBase64}");
         }
 
+        if (!String.IsNullOrWhiteSpace(Settings.Get.General.BannedTrackers))
+        {
+            var bannedTrackers = Settings.Get.General.BannedTrackers.Split(',');
+
+            foreach (var bannedTracker in bannedTrackers)
+            {
+                var bannedTrackerCompare = bannedTracker.Trim().ToLower();
+
+                if (String.IsNullOrWhiteSpace(bannedTrackerCompare))
+                {
+                    continue;
+                }
+
+                if (!String.IsNullOrWhiteSpace(monoTorrent.Source) && monoTorrent.Source.Contains(bannedTracker))
+                {
+                    throw new($"Cannot add torrent, the torrent source '{monoTorrent.Source}' is a banned tracker.");
+                }
+
+                if (monoTorrent.AnnounceUrls != null)
+                {
+                    var bannedUrls = monoTorrent.AnnounceUrls.SelectMany(m => m).Where(m => m.Trim().ToLower().Contains(bannedTrackerCompare)).ToList();
+
+                    if (bannedUrls.Count > 0)
+                    {
+                        var bannedUrlsString = String.Join(", ", bannedUrls);
+                        throw new($"Cannot add torrent, the torrent contains banned trackers: {bannedUrlsString}.");
+                    }
+                }
+            }
+        }
+        
         torrent.RdStatus = TorrentStatus.Queued;
         torrent.RdName = monoTorrent.Name;
 
@@ -213,7 +281,7 @@ public class Torrents(
     /// <param name="torrent">The torrent from the database to upload to the debrid provider</param>
     /// <returns>Updated torrent</returns>
     /// <exception cref="Exception">When RdId is not null or FileOrMagnet is null.</exception>
-    public async Task<Torrent> DequeueFromDebridQueue(Torrent torrent)
+    public async Task DequeueFromDebridQueue(Torrent torrent)
     {
         if (torrent.RdId != null)
         {
@@ -224,18 +292,25 @@ public class Torrents(
         {
             throw new("Torrent has no torrent file or magnet link");
         }
-        
+
         logger.LogDebug("Adding {hash} to debrid provider {torrentInfo}", torrent.Hash, torrent.ToLog());
 
-        var id = torrent.IsFile
-            ? await TorrentClient.AddFile(Convert.FromBase64String(torrent.FileOrMagnet))
-            : await TorrentClient.AddMagnet(torrent.FileOrMagnet);
+        await RealDebridUpdateLock.WaitAsync();
 
-        await torrentData.UpdateRdId(torrent, id);
+        try
+        {
+            var id = torrent.IsFile
+                ? await TorrentClient.AddFile(Convert.FromBase64String(torrent.FileOrMagnet))
+                : await TorrentClient.AddMagnet(torrent.FileOrMagnet);
 
-        await UpdateTorrentClientData(torrent);
+            await torrentData.UpdateRdId(torrent, id);
 
-        return torrent;
+            await UpdateTorrentClientData(torrent);
+        }
+        finally
+        {
+            RealDebridUpdateLock.Release();
+        }
     }
 
     public async Task<IList<TorrentClientAvailableFile>> GetAvailableFiles(String hash)
@@ -426,7 +501,7 @@ public class Torrents(
     {
         var download = await downloads.GetById(downloadId) ?? throw new($"Download with ID {downloadId} not found");
 
-        Log($"Unrestricting link", download, download.Torrent);
+        Log("Unrestricting link", download, download.Torrent);
 
         var unrestrictedLink = await TorrentClient.Unrestrict(download.Path);
 
@@ -445,7 +520,7 @@ public class Torrents(
 
         Log($"Retrieving filename for", download, download.Torrent);
 
-        var fileName = await TorrentClient.GetFileName(download!);
+        var fileName = await TorrentClient.GetFileName(download);
 
         await downloads.UpdateFileName(downloadId, fileName);
 
@@ -493,6 +568,7 @@ public class Torrents(
                         DownloadClient = Settings.Get.DownloadClient.Client,
                         DownloadAction = Settings.Get.Provider.Default.OnlyDownloadAvailableFiles ? TorrentDownloadAction.DownloadAvailableFiles : TorrentDownloadAction.DownloadAll,
                         HostDownloadAction = Settings.Get.Provider.Default.HostDownloadAction,
+                        FinishedActionDelay = Settings.Get.Provider.Default.FinishedActionDelay,
                         FinishedAction = Settings.Get.Provider.Default.FinishedAction,
                         DownloadMinSize = Settings.Get.Provider.Default.MinFileSize,
                         IncludeRegex = Settings.Get.Provider.Default.IncludeRegex,
@@ -727,30 +803,21 @@ public class Torrents(
                                           Boolean isFile,
                                           Torrent torrent)
     {
-        await RealDebridUpdateLock.WaitAsync();
+        var existingTorrent = await torrentData.GetByHash(infoHash);
 
-        try
+        if (existingTorrent != null)
         {
-            var existingTorrent = await torrentData.GetByHash(infoHash);
-
-            if (existingTorrent != null)
-            {
-                return existingTorrent;
-            }
-
-            var newTorrent = await torrentData.Add(null,
-                                                   infoHash,
-                                                   fileOrMagnetContents,
-                                                   isFile,
-                                                   torrent.DownloadClient,
-                                                   torrent);
-
-            return newTorrent;
+            return existingTorrent;
         }
-        finally
-        {
-            RealDebridUpdateLock.Release();
-        }
+
+        var newTorrent = await torrentData.Add(null,
+                                               infoHash,
+                                               fileOrMagnetContents,
+                                               isFile,
+                                               torrent.DownloadClient,
+                                               torrent);
+
+        return newTorrent;
     }
 
     public async Task Update(Torrent torrent)
